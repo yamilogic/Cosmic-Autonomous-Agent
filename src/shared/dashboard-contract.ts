@@ -163,6 +163,7 @@ export interface ScrapeRunChannel {
   status: 'read' | 'empty' | 'skipped' | 'error'
   skippedReason?: string
   error?: string
+  engineMode?: 'direct_api' | 'browser'
 }
 
 export interface ScrapeRunPerson {
