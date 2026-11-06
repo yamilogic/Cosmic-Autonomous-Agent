@@ -54,6 +54,7 @@ export function ScrapeLogExplorer({
   const [statusFilter, setStatusFilter] = useState<ScrapeRunStatus | 'all'>('all')
   const [triggerFilter, setTriggerFilter] = useState<ScrapeTrigger | 'all'>('all')
   const [engineFilter, setEngineFilter] = useState<'all' | 'direct_api' | 'browser'>('all')
+  const [hideEmptyChannels, setHideEmptyChannels] = useState<boolean>(true)
   const [busy, setBusy] = useState(false)
 
   const fetchRuns = useCallback(async () => {
@@ -106,15 +107,28 @@ export function ScrapeLogExplorer({
     [displayedRuns, selectedRunId]
   )
 
+  const displayedChannels = useMemo(() => {
+    if (!activeRun) return []
+    if (!hideEmptyChannels) return activeRun.channels
+    const withMessages = activeRun.channels.filter((c) => (c.messagesRead || 0) > 0)
+    return withMessages.length > 0 ? withMessages : activeRun.channels
+  }, [activeRun, hideEmptyChannels])
+
+  const skippedCount = useMemo(() => {
+    if (!activeRun) return 0
+    return activeRun.channels.filter((c) => (c.messagesRead || 0) === 0).length
+  }, [activeRun])
+
   const activeChannel = useMemo(() => {
     if (!activeRun) return null
     return (
-      activeRun.channels.find((channel) => channel.channelId === selectedChannelId) ??
-      activeRun.channels.find((channel) => channel.status === 'read') ??
+      displayedChannels.find((channel) => channel.channelId === selectedChannelId) ??
+      displayedChannels.find((channel) => (channel.messagesRead || 0) > 0) ??
+      displayedChannels[0] ??
       activeRun.channels[0] ??
       null
     )
-  }, [activeRun, selectedChannelId])
+  }, [activeRun, displayedChannels, selectedChannelId])
 
   const snippets = useMemo(() => {
     if (!activeRun || !activeChannel) return []
@@ -417,8 +431,8 @@ export function ScrapeLogExplorer({
                   >
                     {activeRun.engineMode === 'direct_api' ||
                     (activeRun as any).sourceKind === 'token'
-                      ? '⚡ Direct API'
-                      : '🌐 Browser DOM'}
+                      ? '⚡ Direct API (~150ms Zero-DOM)'
+                      : '🌐 Browser DOM (Headless View)'}
                   </b>
                 </span>
                 <span style={{ color: '#64748b' }}>Run {activeRun.runId}</span>
@@ -442,7 +456,7 @@ export function ScrapeLogExplorer({
               <div style={{ display: 'flex', gap: 10, minHeight: 0, flex: 1 }}>
                 <div
                   style={{
-                    width: 250,
+                    width: 260,
                     flexShrink: 0,
                     overflowY: 'auto',
                     border: '1px solid rgba(255,255,255,0.08)',
@@ -450,26 +464,73 @@ export function ScrapeLogExplorer({
                     padding: 8,
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 4
+                    gap: 6
                   }}
                 >
                   <div
                     style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: '#64748b',
-                      textTransform: 'uppercase'
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '2px 4px 6px',
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
                     }}
                   >
-                    Channels
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: '#64748b',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.04em'
+                      }}
+                    >
+                      Channels ({displayedChannels.length})
+                    </span>
+                    {skippedCount > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setHideEmptyChannels((prev) => !prev)}
+                        title={
+                          hideEmptyChannels
+                            ? `Show ${skippedCount} skipped channels`
+                            : 'Hide 0-message skipped channels'
+                        }
+                        style={{
+                          background: hideEmptyChannels
+                            ? 'rgba(99, 102, 241, 0.15)'
+                            : 'rgba(255, 255, 255, 0.08)',
+                          border: `1px solid ${
+                            hideEmptyChannels
+                              ? 'rgba(99, 102, 241, 0.35)'
+                              : 'rgba(255, 255, 255, 0.12)'
+                          }`,
+                          color: hideEmptyChannels ? '#a5b4fc' : '#cbd5e1',
+                          borderRadius: 4,
+                          padding: '2px 6px',
+                          fontSize: 10,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          transition: 'all 0.12s ease'
+                        }}
+                      >
+                        {hideEmptyChannels ? `+${skippedCount} skipped` : 'Hide 0-read'}
+                      </button>
+                    ) : null}
                   </div>
-                  {activeRun.channels.length === 0 ? (
-                    <div style={{ fontSize: 12, color: '#64748b' }}>
-                      No channel detail recorded.
+                  {displayedChannels.length === 0 ? (
+                    <div style={{ fontSize: 12, color: '#64748b', padding: 8 }}>
+                      No channels with messages in this run.
                     </div>
                   ) : (
-                    activeRun.channels.map((channel) => {
+                    displayedChannels.map((channel) => {
                       const selected = activeChannel?.channelId === channel.channelId
+                      const channelEngine =
+                        channel.engineMode ??
+                        activeRun.engineMode ??
+                        ((activeRun as any).sourceKind === 'token' ? 'direct_api' : 'browser')
+                      const isDirect = channelEngine === 'direct_api'
+
                       return (
                         <button
                           key={channel.channelId}
@@ -477,37 +538,72 @@ export function ScrapeLogExplorer({
                           onClick={() => setSelectedChannelId(channel.channelId)}
                           style={{
                             textAlign: 'left',
-                            padding: '6px 8px',
-                            borderRadius: 5,
-                            border: `1px solid ${selected ? '#38bdf8' : 'transparent'}`,
-                            background: selected ? 'rgba(56,189,248,0.1)' : 'transparent',
+                            padding: '7px 9px',
+                            borderRadius: 6,
+                            border: `1px solid ${selected ? '#38bdf8' : 'rgba(255,255,255,0.04)'}`,
+                            background: selected ? 'rgba(56,189,248,0.12)' : 'rgba(255,255,255,0.02)',
                             cursor: 'pointer',
                             color: '#e2e8f0',
                             fontSize: 12,
                             display: 'flex',
                             flexDirection: 'column',
-                            gap: 2
+                            gap: 3,
+                            transition: 'all 0.1s ease'
                           }}
                         >
                           <span
-                            style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}
+                            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}
                           >
-                            <span>
-                              {channel.kind === 'dm'
-                                ? '💬'
-                                : channel.kind === 'private'
-                                  ? '🔒'
-                                  : '#'}{' '}
-                              {channel.channelName}
+                            <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <span>
+                                {channel.kind === 'dm'
+                                  ? '💬'
+                                  : channel.kind === 'private'
+                                    ? '🔒'
+                                    : '#'}
+                              </span>
+                              <span style={{ color: selected ? '#bae6fd' : '#f1f5f9' }}>
+                                {channel.channelName}
+                              </span>
                             </span>
-                            <span style={{ color: '#64748b', fontSize: 11 }}>
+                            <span
+                              style={{
+                                color: (channel.messagesRead || 0) > 0 ? '#34d399' : '#64748b',
+                                fontSize: 11,
+                                fontWeight: 600
+                              }}
+                            >
                               {channel.messagesRead} read
                               {channel.newMessages > 0 ? ` (+${channel.newMessages})` : ''}
                             </span>
                           </span>
-                          <span style={{ fontSize: 10, color: '#64748b' }}>
-                            {channelKindLabel(channel.kind)} · {channel.status}
-                            {channel.skippedReason ? ` · ${channel.skippedReason}` : ''}
+                          <span
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              fontSize: 10,
+                              color: '#64748b'
+                            }}
+                          >
+                            <span>
+                              {channelKindLabel(channel.kind)} · {channel.status}
+                              {channel.skippedReason ? ` · ${channel.skippedReason}` : ''}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 9,
+                                fontWeight: 700,
+                                padding: '1px 5px',
+                                borderRadius: 3,
+                                background: isDirect
+                                  ? 'rgba(16, 185, 129, 0.15)'
+                                  : 'rgba(59, 130, 246, 0.15)',
+                                color: isDirect ? '#6ee7b7' : '#93c5fd'
+                              }}
+                            >
+                              {isDirect ? '⚡ Direct API' : '🌐 Browser DOM'}
+                            </span>
                           </span>
                         </button>
                       )
@@ -562,10 +658,37 @@ export function ScrapeLogExplorer({
                       fontSize: 11,
                       fontWeight: 600,
                       color: '#64748b',
-                      textTransform: 'uppercase'
+                      textTransform: 'uppercase',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between'
                     }}
                   >
-                    Messages
+                    <span>
+                      Messages {activeChannel ? `· #${activeChannel.channelName}` : ''}
+                    </span>
+                    {activeChannel && (activeChannel.messagesRead || 0) > 0 && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 700,
+                          padding: '1px 6px',
+                          borderRadius: 3,
+                          background:
+                            (activeChannel.engineMode ?? activeRun?.engineMode) === 'direct_api'
+                              ? 'rgba(16, 185, 129, 0.15)'
+                              : 'rgba(59, 130, 246, 0.15)',
+                          color:
+                            (activeChannel.engineMode ?? activeRun?.engineMode) === 'direct_api'
+                              ? '#34d399'
+                              : '#60a5fa'
+                        }}
+                      >
+                        {(activeChannel.engineMode ?? activeRun?.engineMode) === 'direct_api'
+                          ? '⚡ Direct API (~150ms)'
+                          : '🌐 Browser DOM'}
+                      </span>
+                    )}
                   </div>
                   <div
                     style={{

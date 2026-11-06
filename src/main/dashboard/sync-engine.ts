@@ -1006,16 +1006,23 @@ export class DashboardSyncEngine {
           continue
         }
         if (!includeKinds.has(kind)) {
-          channels.push({
-            channelId: ch.id,
-            channelName: name,
-            kind,
-            messagesRead: 0,
-            newMessages: 0,
-            status: 'skipped',
-            skippedReason: kind === 'dm' || kind === 'group-dm' ? 'dm-disabled' : 'kind-disabled'
-          })
-          continue
+          // Explicit Matrix selection overrides blanket DM policy:
+          // If the user explicitly checked this DM in the Stacked Matrix, scrape it!
+          const isExplicitlySelected = selectedChannelIds.has(ch.id)
+          if ((kind === 'dm' || kind === 'group-dm') && isExplicitlySelected) {
+            // Authorized by explicit user selection in Matrix
+          } else {
+            channels.push({
+              channelId: ch.id,
+              channelName: name,
+              kind,
+              messagesRead: 0,
+              newMessages: 0,
+              status: 'skipped',
+              skippedReason: kind === 'dm' || kind === 'group-dm' ? 'dm-disabled' : 'kind-disabled'
+            })
+            continue
+          }
         }
 
         this.scrapeEventListener?.({
@@ -1173,6 +1180,8 @@ export class DashboardSyncEngine {
             messages = messages.filter((m) => peopleFilter.has((m.user ?? '').trim().toLowerCase()))
           }
 
+          const channelEngineMode: 'direct_api' | 'browser' = directApiClient ? 'direct_api' : 'browser'
+
           if (messages.length === 0) {
             channels.push({
               channelId: ch.id,
@@ -1180,7 +1189,8 @@ export class DashboardSyncEngine {
               kind,
               messagesRead: 0,
               newMessages: 0,
-              status: 'empty'
+              status: 'empty',
+              engineMode: channelEngineMode
             })
             continue
           }
@@ -1219,7 +1229,8 @@ export class DashboardSyncEngine {
             kind,
             messagesRead: messages.length,
             newMessages: append.added,
-            status: 'read'
+            status: 'read',
+            engineMode: channelEngineMode
           })
 
           for (const message of messages) {
