@@ -6,8 +6,7 @@ import type {
   DashboardProjectChatPayload,
   DashboardProjectChatSourceRef,
   DashboardProjectChatStatus,
-  ProjectSource,
-  ProjectSourceChannel
+  ProjectSource
 } from '../../../../shared/dashboard-contract'
 import ChatMarkdown from './ChatMarkdown'
 import SocialChannelSidebar from './SocialChannelSidebar'
@@ -480,7 +479,6 @@ export default function AgentChatPanel({
   const [confirmClear, setConfirmClear] = useState(false)
   const [showJump, setShowJump] = useState(false)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
-  const [composerMode, setComposerMode] = useState<'reply' | 'agent'>('reply')
   const [sendingReply, setSendingReply] = useState(false)
 
   // Autocomplete state
@@ -513,54 +511,8 @@ export default function AgentChatPanel({
     return socialSource.channels.find((c) => c.id === activeChannelId) ?? null
   }, [activeChannelId, socialSource])
 
-  // Synchronize default composer mode when channel changes
-  useEffect(() => {
-    if (activeChannel?.agentWrite) {
-      setComposerMode('reply')
-    } else {
-      setComposerMode('agent')
-    }
-  }, [activeChannelId, activeChannel?.agentWrite])
-
-  // All monitored channels across sources (for Master Supervisor control)
-  const allMonitoredChannels = useMemo(() => {
-    const list: Array<{
-      sourceId: string
-      sourceName: string
-      channel: ProjectSourceChannel
-    }> = []
-    const srcList = sources || (socialSource ? [socialSource] : [])
-    for (const s of srcList) {
-      for (const ch of s.channels || []) {
-        if (ch.enabled !== false) {
-          list.push({
-            sourceId: s.id,
-            sourceName: s.workspaceName || s.platform || 'Workspace',
-            channel: ch
-          })
-        }
-      }
-    }
-    return list
-  }, [sources, socialSource])
-
-  const [masterScope, setMasterScope] = useState<string>('global')
   const [masterPolicy, setMasterPolicy] = useState<AutoReplyPolicy>('mention_dm')
   const [masterPersona, setMasterPersona] = useState<AutoReplyPersona>('professional')
-
-  const handleMasterScopeChange = useCallback(
-    (newScope: string) => {
-      setMasterScope(newScope)
-      if (newScope !== 'global') {
-        const found = allMonitoredChannels.find((m) => m.channel.id === newScope)
-        if (found) {
-          if (found.channel.autoReplyPolicy) setMasterPolicy(found.channel.autoReplyPolicy)
-          if (found.channel.autoReplyPersona) setMasterPersona(found.channel.autoReplyPersona)
-        }
-      }
-    },
-    [allMonitoredChannels]
-  )
 
   const handleDraftChange = useCallback((text: string) => {
     setDraft(text)
@@ -615,52 +567,24 @@ export default function AgentChatPanel({
       if (mode === 'project') {
         setMasterPolicy(policy)
         const srcList = sources || (socialSource ? [socialSource] : [])
-        if (masterScope === 'global') {
-          try {
-            for (const src of srcList) {
-              await window.api.dashboard.updateSource({
-                projectId,
-                sourceId: src.id,
-                patch: {
-                  channels: (src.channels || []).map((c) => ({
-                    ...c,
-                    autoReplyPolicy: policy,
-                    autoReply: policy !== 'disabled'
-                  }))
-                }
-              })
-            }
-            setNotice(`Global auto-reply policy updated to "${policy}" across all connected channels`)
-            setTimeout(() => setNotice(null), 3000)
-          } catch (err) {
-            setNotice(err instanceof Error ? err.message : 'Failed to update global policy')
-          }
-        } else {
-          const target = allMonitoredChannels.find((m) => m.channel.id === masterScope)
-          if (target) {
-            const src = srcList.find((s) => s.id === target.sourceId)
-            if (src) {
-              try {
-                await window.api.dashboard.updateSource({
-                  projectId,
-                  sourceId: src.id,
-                  patch: {
-                    channels: src.channels.map((c) =>
-                      c.id === masterScope
-                        ? { ...c, autoReplyPolicy: policy, autoReply: policy !== 'disabled' }
-                        : c
-                    )
-                  }
-                })
-                setNotice(
-                  `Auto-reply policy for #${target.channel.name.replace(/^[#@]/, '')} set to "${policy}"`
-                )
-                setTimeout(() => setNotice(null), 3000)
-              } catch (err) {
-                setNotice(err instanceof Error ? err.message : 'Failed to update channel policy')
+        try {
+          for (const src of srcList) {
+            await window.api.dashboard.updateSource({
+              projectId,
+              sourceId: src.id,
+              patch: {
+                channels: (src.channels || []).map((c) => ({
+                  ...c,
+                  autoReplyPolicy: policy,
+                  autoReply: policy !== 'disabled'
+                }))
               }
-            }
+            })
           }
+          setNotice(`Auto-reply policy set to "${policy}"`)
+          setTimeout(() => setNotice(null), 3000)
+        } catch (err) {
+          setNotice(err instanceof Error ? err.message : 'Failed to update policy')
         }
         return
       }
@@ -688,7 +612,7 @@ export default function AgentChatPanel({
         setNotice(err instanceof Error ? err.message : 'Failed to update policy')
       }
     },
-    [mode, masterScope, sources, allMonitoredChannels, socialSource, activeChannel, projectId]
+    [mode, sources, socialSource, activeChannel, projectId]
   )
 
   const handleUpdatePersona = useCallback(
@@ -696,49 +620,23 @@ export default function AgentChatPanel({
       if (mode === 'project') {
         setMasterPersona(persona)
         const srcList = sources || (socialSource ? [socialSource] : [])
-        if (masterScope === 'global') {
-          try {
-            for (const src of srcList) {
-              await window.api.dashboard.updateSource({
-                projectId,
-                sourceId: src.id,
-                patch: {
-                  channels: (src.channels || []).map((c) => ({
-                    ...c,
-                    autoReplyPersona: persona
-                  }))
-                }
-              })
-            }
-            setNotice(`AI persona set to "${persona}" across all connected channels`)
-            setTimeout(() => setNotice(null), 3000)
-          } catch (err) {
-            setNotice(err instanceof Error ? err.message : 'Failed to update persona')
-          }
-        } else {
-          const target = allMonitoredChannels.find((m) => m.channel.id === masterScope)
-          if (target) {
-            const src = srcList.find((s) => s.id === target.sourceId)
-            if (src) {
-              try {
-                await window.api.dashboard.updateSource({
-                  projectId,
-                  sourceId: src.id,
-                  patch: {
-                    channels: src.channels.map((c) =>
-                      c.id === masterScope ? { ...c, autoReplyPersona: persona } : c
-                    )
-                  }
-                })
-                setNotice(
-                  `AI persona for #${target.channel.name.replace(/^[#@]/, '')} set to "${persona}"`
-                )
-                setTimeout(() => setNotice(null), 3000)
-              } catch (err) {
-                setNotice(err instanceof Error ? err.message : 'Failed to update channel persona')
+        try {
+          for (const src of srcList) {
+            await window.api.dashboard.updateSource({
+              projectId,
+              sourceId: src.id,
+              patch: {
+                channels: (src.channels || []).map((c) => ({
+                  ...c,
+                  autoReplyPersona: persona
+                }))
               }
-            }
+            })
           }
+          setNotice(`AI persona set to "${persona}"`)
+          setTimeout(() => setNotice(null), 3000)
+        } catch (err) {
+          setNotice(err instanceof Error ? err.message : 'Failed to update persona')
         }
         return
       }
@@ -762,7 +660,7 @@ export default function AgentChatPanel({
         setNotice(err instanceof Error ? err.message : 'Failed to update persona')
       }
     },
-    [mode, masterScope, sources, allMonitoredChannels, socialSource, activeChannel, projectId]
+    [mode, sources, socialSource, activeChannel, projectId]
   )
 
   const runIdRef = useRef<string | null>(null)
@@ -970,11 +868,9 @@ export default function AgentChatPanel({
   }, [loadChannelAndChatHistory, activeChannelId])
 
   const sendDirectSlackReply = useCallback(
-    async (textOverride?: string, channelOverride?: string): Promise<void> => {
+    async (textOverride?: string): Promise<void> => {
       const text = (textOverride ?? draft).trim()
-      const targetChannelId =
-        channelOverride || activeChannelId || (masterScope !== 'global' ? masterScope : null)
-      if (!text || !targetChannelId || sendingReply) return
+      if (!text || !activeChannelId || sendingReply) return
 
       const tempId = `temp-${Date.now()}`
       const tempMsg: DisplayChatMessage = {
@@ -998,7 +894,7 @@ export default function AgentChatPanel({
       try {
         const res = await window.api.dashboard.sendMessage({
           projectId,
-          channelId: targetChannelId,
+          channelId: activeChannelId,
           text
         })
 
@@ -1034,7 +930,7 @@ export default function AgentChatPanel({
         setSendingReply(false)
       }
     },
-    [draft, activeChannelId, masterScope, sendingReply, projectId, scrollToBottom]
+    [draft, activeChannelId, sendingReply, projectId, scrollToBottom]
   )
 
   const refreshStatus = useCallback((): void => {
@@ -1366,29 +1262,13 @@ export default function AgentChatPanel({
       }
 
       event.preventDefault()
-      if (activeChannel && composerMode === 'reply' && !isSlashCommandOrExplicitDispatch(draft)) {
-        void sendDirectSlackReply()
-      } else if (
-        mode === 'project' &&
-        composerMode === 'reply' &&
-        masterScope !== 'global' &&
-        !isSlashCommandOrExplicitDispatch(draft)
-      ) {
+      if (activeChannel && !isSlashCommandOrExplicitDispatch(draft)) {
         void sendDirectSlackReply()
       } else {
         void send()
       }
     },
-    [
-      autocompleteTrigger,
-      activeChannel,
-      composerMode,
-      draft,
-      mode,
-      masterScope,
-      sendDirectSlackReply,
-      send
-    ]
+    [autocompleteTrigger, activeChannel, draft, sendDirectSlackReply, send]
   )
 
   if (mode === 'agentwork') {
@@ -1414,7 +1294,7 @@ export default function AgentChatPanel({
     !streaming &&
     !sendingReply &&
     draft.trim().length > 0 &&
-    (composerMode === 'reply' ? true : !keyMissing)
+    (activeChannel ? true : !keyMissing)
 
   const activeChanDisplay = activeChannel ? formatChannelDisplayName(activeChannel) : null
 
@@ -1931,160 +1811,19 @@ export default function AgentChatPanel({
         </div>
       ) : null}
 
-      {mode === 'project' || socialSource || (activeChannel && activeChanDisplay) ? (
-        <div className="chat-composer-mode-bar">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {mode === 'project' ? (
-              <>
-                <button
-                  type="button"
-                  style={{
-                    background: composerMode === 'agent' ? 'rgba(168, 85, 247, 0.2)' : 'transparent',
-                    color: composerMode === 'agent' ? '#c084fc' : 'var(--text-muted)',
-                    border: composerMode === 'agent' ? '1px solid rgba(168, 85, 247, 0.4)' : '1px solid transparent',
-                    borderRadius: 4,
-                    padding: '2px 8px',
-                    fontSize: 10,
-                    fontWeight: 600,
-                    cursor: 'pointer'
-                  }}
-                  onClick={() => setComposerMode('agent')}
-                >
-                  🤖 Master Supervisor Copilot
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    background: composerMode === 'reply' ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
-                    color: composerMode === 'reply' ? '#a5b4fc' : 'var(--text-muted)',
-                    border: composerMode === 'reply' ? '1px solid rgba(99, 102, 241, 0.4)' : '1px solid transparent',
-                    borderRadius: 4,
-                    padding: '2px 8px',
-                    fontSize: 10,
-                    fontWeight: 600,
-                    cursor: 'pointer'
-                  }}
-                  onClick={() => setComposerMode('reply')}
-                >
-                  ⚡ Direct Dispatch Mode
-                </button>
-              </>
-            ) : activeChanDisplay ? (
-              <>
-                <button
-                  type="button"
-                  style={{
-                    background: composerMode === 'reply' ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
-                    color: composerMode === 'reply' ? '#a5b4fc' : 'var(--text-muted)',
-                    border: composerMode === 'reply' ? '1px solid rgba(99, 102, 241, 0.4)' : '1px solid transparent',
-                    borderRadius: 4,
-                    padding: '2px 8px',
-                    fontSize: 10,
-                    fontWeight: 600,
-                    cursor: 'pointer'
-                  }}
-                  onClick={() => setComposerMode('reply')}
-                >
-                  💬 Reply in {activeChanDisplay.fullName}
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    background: composerMode === 'agent' ? 'rgba(168, 85, 247, 0.2)' : 'transparent',
-                    color: composerMode === 'agent' ? '#c084fc' : 'var(--text-muted)',
-                    border: composerMode === 'agent' ? '1px solid rgba(168, 85, 247, 0.4)' : '1px solid transparent',
-                    borderRadius: 4,
-                    padding: '2px 8px',
-                    fontSize: 10,
-                    fontWeight: 600,
-                    cursor: 'pointer'
-                  }}
-                  onClick={() => setComposerMode('agent')}
-                >
-                  🤖 Instruct Cosmic AI
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  style={{
-                    background: 'rgba(99, 102, 241, 0.15)',
-                    color: '#a5b4fc',
-                    border: '1px solid rgba(99, 102, 241, 0.3)',
-                    borderRadius: 4,
-                    padding: '2px 8px',
-                    fontSize: 10,
-                    fontWeight: 600
-                  }}
-                >
-                  🌐 All Channels Overview
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    background: composerMode === 'agent' ? 'rgba(168, 85, 247, 0.2)' : 'transparent',
-                    color: composerMode === 'agent' ? '#c084fc' : 'var(--text-muted)',
-                    border: composerMode === 'agent' ? '1px solid rgba(168, 85, 247, 0.4)' : '1px solid transparent',
-                    borderRadius: 4,
-                    padding: '2px 8px',
-                    fontSize: 10,
-                    fontWeight: 600,
-                    cursor: 'pointer'
-                  }}
-                  onClick={() => setComposerMode('agent')}
-                >
-                  🤖 Instruct Cosmic AI
-                </button>
-              </>
-            )}
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
-            {mode === 'project' && allMonitoredChannels.length > 0 ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ fontSize: 9.5, color: '#94a3b8', fontWeight: 650 }}>Scope:</span>
-                <select
-                  aria-label="Target Scope"
-                  value={masterScope}
-                  onChange={(e) => handleMasterScopeChange(e.target.value)}
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.07)',
-                    border: '1px solid rgba(255, 255, 255, 0.14)',
-                    borderRadius: 4,
-                    color: '#cbd5e1',
-                    fontSize: 10,
-                    fontWeight: 600,
-                    padding: '2px 5px',
-                    cursor: 'pointer',
-                    outline: 'none'
-                  }}
-                >
-                  <option value="global" style={{ background: '#0f172a', color: '#67e8f9' }}>
-                    🌐 All Connected Accounts / Global
-                  </option>
-                  {allMonitoredChannels.map((item) => (
-                    <option
-                      key={`${item.sourceId}-${item.channel.id}`}
-                      value={item.channel.id}
-                      style={{ background: '#0f172a', color: '#cbd5e1' }}
-                    >
-                      @{item.sourceName} · #{item.channel.name.replace(/^[#@]/, '')}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ fontSize: 9.5, color: '#94a3b8', fontWeight: 650 }}>Auto-Reply:</span>
+      {mode === 'project' || socialSource || activeChannel ? (
+        <div
+          className="chat-composer-mode-bar"
+          style={{ justifyContent: 'flex-end', padding: '4px 10px' }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 650 }}>Auto-Reply:</span>
               <select
                 aria-label="Auto-Reply Policy"
                 value={
                   mode === 'project'
-                    ? masterScope === 'global'
-                      ? masterPolicy
-                      : allMonitoredChannels.find((m) => m.channel.id === masterScope)?.channel.autoReplyPolicy || 'disabled'
+                    ? masterPolicy
                     : activeChannel?.autoReplyPolicy || (activeChannel?.autoReply ? 'mention_dm' : 'disabled')
                 }
                 onChange={(e) => void handleUpdatePolicy(e.target.value as AutoReplyPolicy)}
@@ -2095,7 +1834,7 @@ export default function AgentChatPanel({
                   color: '#cbd5e1',
                   fontSize: 10,
                   fontWeight: 600,
-                  padding: '2px 5px',
+                  padding: '2px 6px',
                   cursor: 'pointer',
                   outline: 'none'
                 }}
@@ -2109,15 +1848,13 @@ export default function AgentChatPanel({
               </select>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ fontSize: 9.5, color: '#94a3b8', fontWeight: 650 }}>Tone:</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 650 }}>Tone:</span>
               <select
                 aria-label="AI Response Persona"
                 value={
                   mode === 'project'
-                    ? masterScope === 'global'
-                      ? masterPersona
-                      : allMonitoredChannels.find((m) => m.channel.id === masterScope)?.channel.autoReplyPersona || 'professional'
+                    ? masterPersona
                     : activeChannel?.autoReplyPersona || 'professional'
                 }
                 onChange={(e) => void handleUpdatePersona(e.target.value as AutoReplyPersona)}
@@ -2128,7 +1865,7 @@ export default function AgentChatPanel({
                   color: '#cbd5e1',
                   fontSize: 10,
                   fontWeight: 600,
-                  padding: '2px 5px',
+                  padding: '2px 6px',
                   cursor: 'pointer',
                   outline: 'none'
                 }}
@@ -2149,14 +1886,7 @@ export default function AgentChatPanel({
         className="chat-composer"
         onSubmit={(event) => {
           event.preventDefault()
-          if (activeChannel && composerMode === 'reply' && !isSlashCommandOrExplicitDispatch(draft)) {
-            void sendDirectSlackReply()
-          } else if (
-            mode === 'project' &&
-            composerMode === 'reply' &&
-            masterScope !== 'global' &&
-            !isSlashCommandOrExplicitDispatch(draft)
-          ) {
+          if (activeChannel && !isSlashCommandOrExplicitDispatch(draft)) {
             void sendDirectSlackReply()
           } else {
             void send()
@@ -2179,21 +1909,13 @@ export default function AgentChatPanel({
             rows={1}
             aria-label="Ask about this project"
             placeholder={
-              mode === 'project' && composerMode === 'reply'
-                ? masterScope !== 'global'
-                  ? `Dispatch directly to #${allMonitoredChannels.find((m) => m.channel.id === masterScope)?.channel.name.replace(/^[#@]/, '')} (Enter to send)…`
-                  : 'Dispatch message (type @account #channel /send : message or Enter to send)…'
-                : activeChanDisplay && composerMode === 'reply'
-                  ? `Message ${activeChanDisplay.fullName} directly on Slack (Enter to send)…`
-                  : keyMissing
-                    ? 'Add an AI key to start chatting'
-                    : mode === 'project'
-                      ? 'Ask or instruct Master Supervisor (type @ for accounts, # for channels, / for commands)…'
-                      : activeChanDisplay
-                        ? `Ask or instruct agent in ${activeChanDisplay.fullName} (type @ for accounts, # for channels, / for commands)…`
-                        : 'Ask about this project (type @ for accounts, # for channels, / for commands)…'
+              activeChanDisplay
+                ? `Message ${activeChanDisplay.fullName} directly on Slack (type @ for accounts, # for channels, / for commands)…`
+                : keyMissing
+                  ? 'Add an AI key to start chatting'
+                  : 'Ask about this project (type @ for accounts, # for channels, / for commands)…'
             }
-            disabled={streaming || sendingReply || (composerMode === 'agent' && keyMissing)}
+            disabled={streaming || sendingReply || (!activeChannel && keyMissing)}
             onChange={(event) => handleDraftChange(event.target.value)}
             onKeyDown={handleComposerKeyDown}
             onCompositionStart={() => {

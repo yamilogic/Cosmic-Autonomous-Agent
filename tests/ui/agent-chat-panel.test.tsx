@@ -751,14 +751,17 @@ describe('AgentChatPanel', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText('🤖 Master Supervisor Copilot')).toBeTruthy()
-      expect(screen.getByText('⚡ Direct Dispatch Mode')).toBeTruthy()
-      expect(screen.getByLabelText('Target Scope')).toBeTruthy()
+      // Must NOT render mode toggle buttons or Scope dropdown
+      expect(screen.queryByText('🤖 Master Supervisor Copilot')).toBeNull()
+      expect(screen.queryByText('⚡ Direct Dispatch Mode')).toBeNull()
+      expect(screen.queryByLabelText('Target Scope')).toBeNull()
+
+      // Must strictly contain only Auto-Reply and Tone dropdowns
       expect(screen.getByLabelText('Auto-Reply Policy')).toBeTruthy()
       expect(screen.getByLabelText('AI Response Persona')).toBeTruthy()
     })
 
-    // Changing policy with global scope updates source
+    // Changing policy updates all connected sources
     const policySelect = screen.getByLabelText('Auto-Reply Policy') as HTMLSelectElement
     fireEvent.change(policySelect, { target: { value: 'all' } })
 
@@ -772,7 +775,7 @@ describe('AgentChatPanel', () => {
     })
   })
 
-  it('intercepts slash command /send : hello in reply mode and routes to projectChat instead of sendMessage', async () => {
+  it('intercepts slash command /send : hello in channel view and routes to projectChat instead of sendMessage', async () => {
     const harness = installApi()
     render(
       <AgentChatPanel
