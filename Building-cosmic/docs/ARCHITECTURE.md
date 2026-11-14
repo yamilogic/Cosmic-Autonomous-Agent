@@ -1,26 +1,26 @@
-# Orbit Dashboards — System Architecture & Design
+# Cosmic System Architecture & Modular Platform Design
 
 ## Overview
-**Orbit Dashboards** is an enterprise-grade multi-profile Slack, Teams, and Web Platform management workspace built on **Electron**, **React 19**, and **TypeScript**.
+**Cosmic** is an autonomous desktop workspace and communication hub built on **Electron 44**, **TypeScript 5.9**, **React 19**, and **Tailwind CSS**.
 
-The application isolates web sessions across client workspaces, synchronizes background channel activity, provides AI-driven project analytics, and delivers real-time observability across all user interactions and IPC channels.
+Cosmic delivers unified communication across **Slack**, **Microsoft Teams**, and **WhatsApp Web**, featuring sub-150ms Zero-DOM direct ingestion, autonomous AI response generation with RAG context grounding, strict per-profile session isolation, and granular permission controls.
 
 ---
 
-## 1. Process Architecture & Boundaries
+## 1. Process Architecture & Security Boundaries
 
 ```mermaid
 flowchart TB
-    subgraph MainProcess ["Main Process (Node.js & Electron Core)"]
+    subgraph MainProcess ["Electron Main Process (Node.js & Native Core)"]
         Index["main/index.ts"]
         ProfileStore["profiles/profile-store.ts"]
+        ViewManager["profiles/browser-view-manager.ts"]
         SyncEngine["dashboard/sync-engine.ts"]
         DeltaStore["dashboard/delta-store.ts"]
+        ChatService["dashboard/chat-service.ts"]
+        ActionEngine["dashboard/agent-action-engine.ts"]
+        PlatformRegistry["platforms/registry.ts"]
         LoggingEngine["logging.ts (Ring Buffer + 15m TTL)"]
-        LogsIpc["ipc/logs.ipc.ts"]
-        AppIpc["ipc/app.ipc.ts"]
-        ProfileIpc["ipc/profiles.ipc.ts"]
-        DashboardIpc["ipc/dashboard.ipc.ts"]
     end
 
     subgraph PreloadBridge ["Preload Context Bridge (Isolated)"]
@@ -28,77 +28,51 @@ flowchart TB
     end
 
     subgraph RendererProcess ["Renderer Process (React 19 & Tailwind)"]
-        App["App.tsx (Root View Engine)"]
-        ZustandStores["useProfileStore · useDashboardStore"]
-        SettingsModal["UnifiedSettingsModal.tsx"]
-        LogsHub["LogsObservabilityTab.tsx"]
-        ObserverView["ObserverView.tsx"]
-        WorkspaceViews["ExpandedWorkspace.tsx"]
+        App["App.tsx"]
+        WorkspaceContent["WorkspaceContent.tsx"]
+        AgentChatPanel["AgentChatPanel.tsx"]
+        PlatformThinBar["PlatformThinBar.tsx"]
+        PlatformControlModal["PlatformControlModal.tsx"]
+        UnifiedSettingsModal["UnifiedSettingsModal.tsx"]
+    end
+
+    subgraph WebViews ["WebContentsView Pool"]
+        SlackView["Slack WebContentsView"]
+        TeamsView["Teams WebContentsView"]
+        WhatsAppView["WhatsApp WebContentsView"]
     end
 
     MainProcess <-->|Typed IPC Channels| PreloadBridge
     PreloadBridge <-->|window.api.*| RendererProcess
+    ViewManager --> WebViews
+    PlatformRegistry --> SyncEngine
 ```
 
-### Security Boundaries
-- **Context Isolation**: `contextIsolation: true` and `nodeIntegration: false` are strictly enforced across all renderer windows and BrowserViews.
-- **Session Partitions**: Each profile operates under an independent `persist:profile_<id>` session partition. Cookies, localStorage, and authentication tokens never bleed across client accounts.
-- **Token Redaction**: Tokens (`xox*`, `nvapi-*`, Bearer headers, passwords) are automatically redacted with `[REDACTED]` prior to hitting in-memory buffers, disk logs, or renderer IPC channels.
+### Security & Isolation Invariants
+- **Strict Context Isolation**: `contextIsolation: true` and `nodeIntegration: false` enforced across all renderers and web views.
+- **Partition Sandboxing**: Each profile and card runs under an isolated session partition (`persist:profile-<id>-<platform>` or `persist:card-<id>-<platform>`). Cookies and authentication stores never cross boundaries.
+- **Offscreen View Retention**: Views remain attached to `mainWindow.contentView` at `(-10000, -10000)` when hidden. This preserves window handles for background IME text input, clipboard operations, and DOM evaluation without visual interference.
+- **Sensitive Token Redaction**: Tokens (`xox*`, `nvapi-*`, Bearer headers, passwords) are scrubbed before hitting memory logs or IPC streams.
 
 ---
 
-## 2. Core Subsystems
+## 2. Modular Platform Suites Architecture
 
-### 2.1 Ephemeral Observability & Logging (`src/main/logging.ts`)
-- **Memory-Bounded Ring Buffer**: Holds the most recent 2,000 log events.
-- **Auto-Expiry Retention**: Ephemeral time-to-live defaults to **15 minutes** (`retentionMs = 900,000`). A 30-second sweeper automatically purges stale records.
-- **Granular Category Tags**:
-  - `[UI]`: User clicks, modal opens/closes, theme changes.
-  - `[NAV]`: Profile activations, tab selections, custom link launches.
-  - `[IPC]`: Preload invoke calls and payloads.
-  - `[SYNC]`: Poller ticks, delta calculations, token health checks.
-  - `[AUTH]`: OAuth flows, Google verification, session refreshes.
-  - `[SEC]`: App lock/unlock, token security events.
-  - `[ERROR]`: Unhandled exceptions, failed promises, React error boundaries.
+Cosmic implements a pluggable architecture via `PlatformBackendRegistry` (`src/main/platforms/registry.ts`), with each platform adhering to `IPlatformBackendAdapter`:
 
-### 2.2 Unified Settings Hub (`UnifiedSettingsModal.tsx`)
-- Single source of truth for application preferences, appearances, sidebar density, accounts, and diagnostics.
-- Sidebar contains 7 unified navigation sections:
-  1. 🎨 Preferences & Appearance
-  2. 🎛️ Advance Control
-  3. 📑 Sidebar & Navigation
-  4. 🤖 Global AI & NVIDIA NIM
-  5. 👥 Accounts & Workspaces
-  6. 📜 Logs & Observability
-  7. 🛡️ System & Maintenance
-
-### 2.3 Background Sync & Delta Engine (`src/main/dashboard/`)
-- Polls monitored Slack channels every 5 minutes (or on manual sync).
-- Stores incremental message history locally in `<userData>/dashboard/`.
-- Computes heuristic project completion %, sentiment indicators, and activity timelines without external cloud transmission.
+| Suite | Implementation Path | Ingestion Engines Supported | Extraction Method |
+|---|---|---|---|
+| **Slack** | `src/main/platforms/slack/slack-platform-suite.ts` | `direct_api`, `browser` | Cookie xoxc token + Web API / DOM |
+| **Microsoft Teams** | `src/main/platforms/teams/teams-platform-suite.ts` | `direct_api`, `browser` | Zero-DOM IndexedDB `replychain` / DOM |
+| **WhatsApp Web** | `src/main/platforms/whatsapp/whatsapp-platform-suite.ts` | `direct_api`, `browser` | Internal `Store.Msg` collection / DOM |
 
 ---
 
-## 3. Directory Layout
+## 3. Core Specifications & Guides Index
 
-```
-Orbit-Dashboards/
-├── docs/
-│   ├── ARCHITECTURE.md         # This document
-│   └── adr/                    # Architecture Decision Records (0001-0008)
-├── GLOSSARY.md                 # Shared domain terminology
-├── src/
-│   ├── main/                   # Electron Main Process
-│   │   ├── ipc/                # Deep IPC handler modules
-│   │   ├── dashboard/          # Sync engine, delta stores, token manager
-│   │   ├── profiles/           # Chrome auth, session partitions, browser views
-│   │   └── logging.ts          # Ephemeral ring-buffer logger & sweeper
-│   ├── preload/                # Secure context bridge definitions
-│   ├── renderer/src/           # React 19 UI
-│   │   ├── components/         # Modals, sidebar, cards, logs hub
-│   │   ├── hooks/              # Zustand state selectors
-│   │   └── styles/             # Modular CSS stylesheets
-│   └── shared/                 # Typed IPC contracts & interfaces
-└── tests/                      # Vitest UI and unit test suites
-```
-
+For exhaustive technical references, see the companion documents:
+- 📖 [COSMIC_SYSTEM_SPECIFICATION.md](file:///home/creator/Desktop/Orbit-Dashboards/Building-cosmic/docs/COSMIC_SYSTEM_SPECIFICATION.md): Deep-dive into dual-engine scraping, RAG context pipeline, message normalization, and slash commands.
+- 🛡️ [PERMISSIONS_AND_HIERARCHY.md](file:///home/creator/Desktop/Orbit-Dashboards/Building-cosmic/docs/PERMISSIONS_AND_HIERARCHY.md): Complete guide to global/client account hierarchy, the permission triad (`enabled`, `agentWrite`, `autoReply`), 6 Auto-Reply Policies, and 6 AI Personas.
+- 🎛️ [CONTROLLER_PAGE_GUIDE.md](file:///home/creator/Desktop/Orbit-Dashboards/Building-cosmic/docs/CONTROLLER_PAGE_GUIDE.md): Interactive manual for the Platform Control Modal, channel discovery, scheduling, audit logs, and engine switching.
+- 🏛️ [FINAL_COSMIC_DUAL_REPO_STABILIZATION_POLICY.md](file:///home/creator/Desktop/Orbit-Dashboards/Building-cosmic/FINAL_COSMIC_DUAL_REPO_STABILIZATION_POLICY.md): Dual-repo stabilization gates and zero-bloat invariants.
+- 📚 [GLOSSARY.md](file:///home/creator/Desktop/Orbit-Dashboards/Building-cosmic/GLOSSARY.md): Shared domain vocabulary.
